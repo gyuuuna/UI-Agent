@@ -1,0 +1,4 @@
+androidviewclient
+python-dotenv
+openai
+hangul-utils
