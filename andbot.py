@@ -3,6 +3,7 @@
 import os
 import time
 import subprocess
+import re
 
 from com.dtmilano.android.viewclient import ViewClient
 import openai
@@ -46,22 +47,40 @@ Interactive elements are represented like this:
 Based on your given objective, issue whatever command you believe will get you closest to achieving your goal.
 Interact with the elements on the screen to achieve your objective.
 Don't try to interact with elements that you can't see.
-Then, tell me the reason why you choosed the action.
+
+First, You must tell the observation of the current screen content and the previous logs.
+Then you must create a plan for this turn and the next turn. You must be reasonable, and think step by step.
+Finally, issue an action command based on the observation and the plan you made right before.
 
 Here are some examples:
 
 EXAMPLE 1:
 CURRENT SCREEN CONTENT:
 ------------------
-<Button id=1> submit-button | content: 제출 | enabled actions: CLICK, LONG-CLICK </Button>
-<Button id=2> close-button | content: 종료 | enabled actions: CLICK, LONG-CLICK </Button>
+<EditText id=1> edit-text | content: 20:00 monday | enabled actions: TYPE, CLICK, LONG-CLICK </EditText>
+<Button id=2> submit-button | content: 제출 | enabled actions: CLICK, LONG-CLICK </Button>
+<Button id=3> close-button | content: 종료 | enabled actions: CLICK, LONG-CLICK </Button>
 ------------------
-OBJECTIVE: 사이트에 가능한 시간과 요일 (20:00, 월요일)을 적고 제출합니다.
 PREVIOUS LOG:
-- [Action] CLICK 6 [Reason] I clicked the 'Next' button to continue.
-- [Action] TYPE 3 "20:00 monday" [Reason] I wrote down the given time and the day of the week to the type form, to notice the enable time.
+
+User: 사이트에 가능한 시간과 요일 (20:00, 월요일)을 적고 제출합니다.
+
+Assistant:
+[Observation] There is 'Next' button (id 6) and 'Back' button (id 5) on the screen.
+[Plan] For this turn, I will click 'Next' button to continue. I will continue until I find an type form to write my available time.
+[Action] CLICK 6
+[Result] Succesfully executed
+
+Assistant:
+[Observation] There is an editText (id 1) on a screen, and the title says 'Type in available time!'.
+[Plan] I will write down the given time and the day of the week to the type form, to notice the enable time for this turn.
+[Action] TYPE 1 "20:00 monday"
+[Result] Succesfully executed
+
 YOUR COMMAND:
-CLICK 1 // I clicked submit-button instead of the close-button, because I have to submit the text I wrote, according to the objective.
+[Observation] I already wrote down "20:00 monday", and it is reflected in the EditText(id=1)
+[Plan] In this turn, I will click submit-button instead of the close-button, because I have to submit the text I wrote, according to the objective. If it works well, I will STOP for the next turn.
+[Action] CLICK 2
 
 EXAMPLE 2:
 CURRENT SCREEN CONTENT:
@@ -75,11 +94,13 @@ CURRENT SCREEN CONTENT:
   <ewGroup id=37> emoticon_button_layout | content:  이모티콘 키보드 열기 버튼 | enabled actions: CLICK, TYPE </ewGroup>
   <FrameLayout id=38> search_sharp_layout | content:  샵검색 열기 버튼 | enabled actions: CLICK, TYPE </FrameLayout>
 ------------------
-OBJECTIVE: Send 카카오톡 message, '안녕'
 PREVIOUS LOG:
-There is no command done yet.
+User: Send kakaotalk message, '안녕'
+
 YOUR COMMAND:
-TYPE 36 "안녕" // I chose to type "카카오톡 안녕" into the message_edit_text field (id 36), because this is the message
+[Observation] The screen seems to be a page that I can type in the text, as it contains message_edit_Text. I have to write down the message '안녕' first.
+[Plan] In this turn, I will type "안녕" into the message_edit_text field (id 36). Then I will seek for a button to send the message for the next turn.
+[Action] TYPE 36 "안녕"
 
 EXAMPLE 3:
 CURRENT SCREEN CONTENT:
@@ -88,25 +109,33 @@ CURRENT SCREEN CONTENT:
 <RelativeLayout id=20> bubble  | enabled actions: CLICK, LONG-CLICK, TYPE </RelativeLayout>
     <TextView id=21> message | content: ㅋㅋㅋㅋㅋㅋ   </TextView>
 <RelativeLayout id=22> bubble  | enabled actions: CLICK, LONG-CLICK, TYPE </RelativeLayout>
-    <TextView id=23> message | content: 안녕   </TextView>
+    <TextView id=23> message | content: lol   </TextView>
 ------------------
-OBJECTIVE: James에게 카카오톡 메시지 '안녕'이라고 보내줘
 PREVIOUS LOG:
-- [Action] CLICK 28 [Reason] I clicked on the ii_message_edit_text field (id 28) to select it for typing, because it seems like the appropriate place to input the message.
-YOUR COMMAND:
-STOP // I chose to quit execution, as there is '안녕' in the TextView(id 23) which I sent by clicking id 28.
+User: James에게 카카오톡 메시지 'lol'이라고 보내줘
 
+Assistant:
+[Observation] There is a chatting page with James on the screen. I already wrote 'lol' in the EditText.
+[Plan] As I already wrote down the message in the EditText form, I will click 'send' button for this turn. If it succeeds, I may stop.
+[Action] CLICK 28
+[Result] Succesfully executed
+
+YOUR COMMAND:
+[Observation] There is 'lol' in the TextView(id 23) which I sent by clicking id 28. It means I succeeded in sending the message.
+[Plan] As I already sent the message, I have nothing more to do. I will stop the execution.
+[Action] STOP
 ----
 
 The current screen content, objective, and previous logs follow. Reply with your next command to the browser.
-You must answer in the form "(Action) // (Reason you chose the action)"
+You must answer in the form "[Observation]...\n[Plan]...\n[Action]..."
 
 CURRENT SCREEN CONTENT:
 ------------------
 $screen_content
 ------------------
-OBJECTIVE: $objective
-PREVIOUS LOG: $previous_log
+PREVIOUS LOG: 
+$previous_log
+
 YOUR COMMAND:
 """
 
@@ -182,19 +211,12 @@ def run():
     view_client = ViewClient(*ViewClient.connectToDeviceOrExit())
     log = []
     objective = input('This is your Android Phone Assistant, AndBot. What is your objective? ')
+    log.append('User:\n'+objective)
     
     def get_gpt_command(screen_content):
         prompt = prompt_template
         prompt = prompt.replace('$screen_content', screen_content)
-        prompt = prompt.replace('$objective', objective)
-        
-        if len(log)==0:
-            log_text = 'No action done yet.'
-        else:
-            log_text = ''
-            for command in log:
-                log_text += f'- [Action] {command[0]} [Reason] {command[1]}\n'
-        prompt = prompt.replace('$previous_log', log_text)
+        prompt = prompt.replace('$previous_log', '\n\n'.join(log))
         
         response = openai.ChatCompletion.create(
             model=gpt4,
@@ -204,10 +226,16 @@ def run():
             ],
             temperature=0.5, max_tokens=1000
         ).choices[0].message.content
-        print(response)
-        command, reason = response.split(' // ')
-        return command, reason
+        
+        return response
     
+    def get_action(gpt_command):
+        action_match = re.search(r"\[Action\]\s*(.*?)$", gpt_command)
+        if action_match:
+            return action_match.group(1).strip()
+        else:
+            return None
+        
     def find_view(unique_id, view):
         if hasattr(view, 'getUniqueId') and view.getUniqueId() == 'id/no_id/'+unique_id:
             return view
@@ -227,7 +255,7 @@ def run():
         if input_text:
             input_text = ' '.join(input_text)
             input_text = input_text.strip('"')
-            print("Type in "+input_text)
+            print("Typing in "+input_text)
         
         action = action.lower()
         if action == "check":
@@ -280,24 +308,27 @@ def run():
             print(traversed_content)
             print('---------------------------------------------------')
             
-            command, reason = get_gpt_command(traversed_content)
-            print('Suggested command: '+command)
-            print('Reason: '+reason)
+            gpt_command = get_gpt_command(traversed_content)
+            print('Suggested command: ')
+            print(gpt_command)
             
-            if command.startswith('STOP'):
+            action = get_action(gpt_command)
+            if action.startswith('STOP'):
                 exit(0)
             
-            execute_flag = input('Execute or not? Press Y/N: ')
-            if execute_flag in ['Y', 'y']:
+            user_input = input('Execute or not? Press Y/N. If you want to edit the objective or tell something to the assistant, type in whatever you want to say: ')
+            if user_input.lower() == 'y':
                 try:
-                    execute(*command.split(' '))
-                    log.append((command, 'Y', reason+': Succesfully executed'))
+                    execute(*action.split(' '))
+                    log.append('Assistant:\n'+gpt_command+'\n[Result] Sucessfully executed')
                 except:
-                    log.append((command, reason+': Failed, could not execute'))
+                    log.append('Assistant:\n'+gpt_command+'\n[Result] Failed, could not execute')
                     continue
-            else:
-                log.append((command, reason+': Failed, wrong choice'))
+            elif user_input.upper() == 'n':
+                log.append('Assistant:\n'+gpt_command+'\n[Result] Failed, wrong choice')
                 continue
+            else:
+                log.append('User:\n'+user_input)
             
     except KeyboardInterrupt:
         exit(0)
