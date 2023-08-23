@@ -36,9 +36,7 @@ You can issue these commands:
 	SELECT X : select on a given element with id X
 	UNSELECT X : select on a given element with id X
 	TYPE X "TEXT" : type the specified text into the element with id X
- 
- And if you think you already achieved the objective, you can issue
-    STOP : quit
+    STOP : if you already achieved the objective, stop making a new command
 
 The format of the browser content is highly simplified; all formatting elements are stripped.
 Interactive elements are represented like this:
@@ -82,6 +80,21 @@ PREVIOUS LOG:
 There is no command done yet.
 YOUR COMMAND:
 TYPE 36 "안녕" // I chose to type "카카오톡 안녕" into the message_edit_text field (id 36), because this is the message
+
+EXAMPLE 3:
+CURRENT SCREEN CONTENT:
+------------------
+<TextView id=19> nickname | content: James </TextView>
+<RelativeLayout id=20> bubble  | enabled actions: CLICK, LONG-CLICK, TYPE </RelativeLayout>
+    <TextView id=21> message | content: ㅋㅋㅋㅋㅋㅋ   </TextView>
+<RelativeLayout id=22> bubble  | enabled actions: CLICK, LONG-CLICK, TYPE </RelativeLayout>
+    <TextView id=23> message | content: 안녕   </TextView>
+------------------
+OBJECTIVE: James에게 카카오톡 메시지 '안녕'이라고 보내줘
+PREVIOUS LOG:
+- [Action] CLICK 28 [Reason] I clicked on the ii_message_edit_text field (id 28) to select it for typing, because it seems like the appropriate place to input the message.
+YOUR COMMAND:
+STOP // I chose to quit execution, as there is '안녕' in the TextView(id 23) which I sent by clicking id 28.
 
 ----
 
@@ -184,7 +197,7 @@ def run():
         prompt = prompt.replace('$previous_log', log_text)
         
         response = openai.ChatCompletion.create(
-            model=chatgpt,
+            model=gpt4,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
